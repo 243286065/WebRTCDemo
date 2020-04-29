@@ -1,0 +1,162 @@
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title>WebRTC本地录屏</title>
+    <script type="text/javascript" src="../js/jquery.min.js"></script>
+
+    <style>
+        video {
+            width: 640px;
+            height: 480px;
+            border: 1px solid black;
+        }
+
+        div {
+            display: inline-block;
+        }
+    </style>
+</head>
+
+<body>
+    <div style="width: 100%;vertical-align: top;">
+        <div>
+            <video id="player" autoplay="autoplay" playsinline="true" controls muted="true"></video>
+            <video id="replayer" playsinline="true" autoplay="autoplay" controls muted="true"
+                style="margin-left: 20px;"></video>
+        </div>
+    </div>
+
+    <button id="recordBtn">开始录制</button>
+    <button id="playBtn" disabled="">播放</button>
+    <button id="downloadBtn" disabled="">下载</button>
+
+    <script>
+        //获取各个控件元素
+        var player = document.getElementById("player");
+        var replayer = $("#replayer")[0];
+        var recordBtn = $("#recordBtn");
+        var playBtn = $("#playBtn");
+        var downloadBtn = $("#downloadBtn");
+        var isRecord = false;
+
+        var buffer; // 用于存储录制数据（数组）
+        var mediaStream;
+        var mediaRecorder;
+
+        start();
+
+        //点击开始录制按钮
+        recordBtn.click(function () {
+            isRecord = ~(isRecord);
+            if (isRecord) {
+                recordBtn.text("停止录制");
+                playBtn.attr('disabled', false);
+                downloadBtn.attr('disabled', false);
+
+                //开始录制屏幕
+                startRecordScreen();
+            } else {
+                recordBtn.text("开始录制");
+                playBtn.attr('disabled', false);
+
+                //停止录制
+                stopRecordScreen();
+            }
+        });
+
+        //开始录制
+        function startRecordScreen() {
+            var types = ["video/webm",
+                "audio/webm",
+                "video/webm\;codecs=vp8",
+                "video/webm\;codecs=daala",
+                "video/webm\;codecs=h264",
+                "audio/webm\;codecs=opus",
+                "video/mpeg"];
+
+            for (var i in types) {
+                console.log("Is " + types[i] + " supported? " + (MediaRecorder.isTypeSupported(types[i]) ? "Maybe!" : "Nope :("));
+            }
+
+            var options = { mimeType: "video/webm\;codecs=vp8" };
+            if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                alert('不支持' + options.mimeType);
+                return;
+            }
+
+            try {
+                buffer = [];
+                mediaRecorder = new MediaRecorder(mediaStream, options);
+            } catch (e) {
+                alert("创建MediaRecorder失败");
+                return;
+            }
+
+            mediaRecorder.ondataavailable = onRecvScreenDataAvailable;
+            //开始录制,每1s触发ondataavailable回调
+            mediaRecorder.start(1000);
+        }
+
+        function stopRecordScreen() {
+            mediaRecorder.stop();
+        }
+
+        //屏幕数据可读
+        function onRecvScreenDataAvailable(data) {
+            if (data && data.data && data.data.size > 0) {
+                buffer.push(data.data);
+            }
+        }
+
+        function start() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+                alert('不支采集音视频数据！');
+            } else {
+                // 采集音频数据
+                var constrants = {
+                    video: true,
+                    audio: true
+                };
+                //注意和摄像头的区别:getDisplayMedia/getUserMedia
+                navigator.mediaDevices.getDisplayMedia(constrants).then(gotMediaStream).catch(getMediaStreamFailed);
+            }
+        }
+
+        // 成功获取媒体流设备调用的方法
+        function gotMediaStream(stream) {
+            console.log(stream);
+            mediaStream = stream;
+            player.srcObject = stream;
+        }
+
+        function getMediaStreamFailed(err) {
+            alert(err.name + ":" + err.message);
+        }
+
+        playBtn.click(function () {
+            var blob = new Blob(buffer, { type: 'video/webm' });
+            // 根据缓存数据生成url给rreplayer进行播放
+            replayer.src = window.URL.createObjectURL(blob);
+            replayer.srcObject = null;
+            replayer.controls = true; // 显示播放控件
+        });
+
+        downloadBtn.click(function () {
+            var blob = new Blob(buffer, { type: 'video/webm' });
+            // 根据缓存数据生成url
+            var url = window.URL.createObjectURL(blob);
+            // 创建一个a标签，通过a标签指向url来下载
+            var a = document.createElement('a');
+            a.href = url;
+            a.style.display = 'none'; // 不显示a标签
+
+            var timestamp = Date.parse(new Date());
+            var filename = timestamp.toString() + ".webm";
+            a.download = filename; // 下载的文件名
+            a.click(); // 调用a标签的点击事件进行下载
+        });
+    </script>
+</body>
+
+</html>
