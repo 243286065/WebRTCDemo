@@ -121,14 +121,16 @@
                     //有新用户加入，与它建立连接
                     console.log('new user joined room: ', socketid);
                     //此时对端可能还没有初始化好，因此需要再加一步
-                    targetSocket = socketid;
-                    //startCall();
+                    if(targetSocket == null) {
+                        targetSocket = socketid;
+                    }
                 }
             });
 
             socket.on("ready", (roomid, socketid)=> {
                 //对端准备好了才开始会话
                 if(socketid == targetSocket) {
+                    console.log("target reday");
                     startCall();
                 }
             })
@@ -149,14 +151,24 @@
                     localVideo.srcObject = null;
                 } else {
                     remoteVideo.srcObject = null;
+                    targetSocket = null;
+                    //重新初始化本地的PeerConnection
+                    hangup();
+                    initLocal();
                 }
             });
 
-            socket.on('message', (roomid, msg)=>{
+            socket.on('message', (roomid, socketid, msg)=>{
                 if(msg === null || msg === undefined) {
                     console.error("Recieve invalid message");
                     return;
                 }
+
+                //本机发送的数据忽略
+                if(socketid == socket.id) {
+                    return;
+                }
+
                 console.log(pc);
                 if(msg.hasOwnProperty('type') && msg.type === 'offer') {
                     pc.setRemoteDescription(new RTCSessionDescription(msg));
@@ -200,8 +212,11 @@
 
             localVideo.srcObject = localStream;
 
+            initLocal();
+            return;
+        }
 
-
+        function initLocal() {
             //创建本地PeerConnection
             createPeerConnection();
             //绑定track
@@ -209,7 +224,6 @@
 
             //通知对端自己准备好
             socket.emit("ready", roomId);
-            return;
         }
 
         function handleError(err) {
@@ -254,6 +268,7 @@
         }
 
         function getRemoteStream(e) {
+            console.log("getremoteStream")
             remoteStream = e.streams[0];
             remoteVideo.srcObject = remoteStream;
         }

@@ -64,7 +64,7 @@ func init() {
 
 	server.OnEvent("/", "message", func(so socketio.Conn, room string, msg interface{}) {
 		//原封不动地转发
-		server.BroadcastToRoom(so.Namespace(), room, "message", room, msg)
+		server.BroadcastToRoom(so.Namespace(), room, "message", room, so.ID(), msg)
 	})
 
 	server.OnEvent("/", "ready", func(so socketio.Conn, room string) {
