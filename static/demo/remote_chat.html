@@ -1,0 +1,314 @@
+<html>
+
+<head>
+    <title>远程1vs1视频聊天Demo</title>
+    <style>
+        video {
+            width: 480px;
+            height: 320px;
+            border: 1px solid black;
+        }
+
+        div {
+            display: inline-block;
+        }
+    </style>
+
+    <script type="text/javascript" src="../js/jquery.min.js"></script>
+    <script src="/static/js/socket.io.js"></script>
+</head>
+
+<body>
+    <div style="width: 100%;vertical-align: top;">
+        <div>
+            <video id="localVideo" autoplay="autoplay" playsinline="true" controls muted></video>
+            <video id="remoteVideo" playsinline="true" autoplay="autoplay" controls style="margin-left: 20px;"></video>
+        </div>
+    </div>
+
+    <button id="joinBtn">加入房间</button>
+    <button id="leaveBtn" disabled="true">离开房间</button>
+    <button id="downloadBtn" disabled="">下载</button>
+
+    <script>
+        //各个控件
+        var localVideo = document.getElementById('localVideo');
+        var remoteVideo = document.getElementById('remoteVideo');
+
+        var joinButton = $("#joinBtn");
+        var leaveButton = $("#leaveBtn");
+
+        var room = "";
+        var state = "offline";
+        var socket = null;
+
+        var roomId = -1;
+        var targetSocket = null;
+
+        var pcConfig = {
+            'iceServers': [{
+                url: 'stun:stun.l.google.com:19302',
+            }]
+        }
+        var pc = null;  //本地PeerConnection对象
+        var localStream = null;
+        var remoteStream = null;
+        var offerDesc = null;
+
+        joinButton.click(function () {
+            room = prompt("请输入房间号：")
+
+            if (room == "") {
+                return;
+            }
+
+            joinButton.attr('disabled', true);
+            leaveButton.attr('disabled', false);
+
+            doJoinRoom(room);
+        });
+
+        leaveButton.click(function () {
+            joinButton.attr('disabled', false);
+            leaveButton.attr('disabled', true);
+
+            doLeaveRoom();
+        });
+
+        //加入房间
+        function doJoinRoom(room) {
+            //初始化socketio
+            var serverHost = "https://" + window.location.host;
+            socket = io(serverHost)
+            console.log(socket);
+            // if(socket > 0) {
+            //     console.log("Connect server succ:", socket);
+            // } else {
+            //     console.error('Failed to connect signal server', socket);
+            // }
+
+            setupSocketIO();
+
+            socket.emit("join", room);
+        }
+
+        function setupSocketIO() {
+            //设置socket消息处理
+            socket.on("joined", (roomid, socketid) => {
+                console.log("recieve msg: ", roomid, " ", socketid);
+                roomId = roomid;
+
+                if (socket.id == socketid) {
+                    //发送给自己的消息，自己加入
+                    
+                    //获取本地stream
+                    var constraints = {
+                        video: {
+                            width: 640,
+                            height: 480
+                        },
+                        audio: {
+                            echoCancellation: true,
+                            noiseSupperssion: true,
+                            autoGainControl: true
+                        }
+                    };
+
+                    navigator.mediaDevices.getUserMedia(constraints)
+                        .then(getMediaStream)
+                        .catch(handleError);
+                } else {
+                    //有新用户加入，与它建立连接
+                    console.log('new user joined room: ', socketid);
+                    //此时对端可能还没有初始化好，因此需要再加一步
+                    targetSocket = socketid;
+                    //startCall();
+                }
+            });
+
+            socket.on("ready", (roomid, socketid)=> {
+                //对端准备好了才开始会话
+                if(socketid == targetSocket) {
+                    startCall();
+                }
+            })
+
+            socket.on("full", (roomid)=>{
+                alert("房间已满：" + roomid);
+                socket.disconnect();
+                socket = null;
+            });
+
+            socket.on('leaved', (roomid, socketid)=> {
+                console.log("user leave room: " + socketid);
+                if(socketid == socket.id) {
+                    hangup();
+                    socket.disconnect();
+                    socket = null;
+
+                    localVideo.srcObject = null;
+                } else {
+                    remoteVideo.srcObject = null;
+                }
+            });
+
+            socket.on('message', (roomid, msg)=>{
+                if(msg === null || msg === undefined) {
+                    console.error("Recieve invalid message");
+                    return;
+                }
+                console.log(pc);
+                if(msg.hasOwnProperty('type') && msg.type === 'offer') {
+                    pc.setRemoteDescription(new RTCSessionDescription(msg));
+
+                    //创建anwser
+                    pc.createAnswer().then(getAnswer).catch(handleAnswerError);
+                } else if(msg.hasOwnProperty('type') && msg.type ==='answer') {
+                    pc.setRemoteDescription(new RTCSessionDescription(msg));
+                } else if(msg.hasOwnProperty('type') && msg.type === 'candidate') {
+                    console.log("candidate:", msg);
+                    var candidate = new RTCIceCandidate({
+                        sdpMLineIndex: msg.label,
+                        candidate: msg.candidate
+                    });
+                    pc.addIceCandidate(candidate);
+                } else {
+                    console.log('Invalid message', msg);
+                }
+            });
+        }
+
+        //离开房间
+        function doLeaveRoom() {
+            if(socket) {
+                //alert(roomId);
+                socket.emit("leave", roomId);
+            } else {
+                console.error("socket not init!");
+            }
+        }
+
+        function getMediaStream(stream) {
+            if (localStream) {
+                stream.getAudioTracks().forEach((track) => {
+                    localStream.addTrack(track);
+                    stream.removeTrack(track);
+                });
+            } else {
+                localStream = stream;
+            }
+
+            localVideo.srcObject = localStream;
+
+
+
+            //创建本地PeerConnection
+            createPeerConnection();
+            //绑定track
+            bindTracks();
+
+            //通知对端自己准备好
+            socket.emit("ready", roomId);
+            return;
+        }
+
+        function handleError(err) {
+            console.error('Failed to get media stream: ', err);
+        }
+
+        //创建PeerConnection
+        function createPeerConnection() {
+            console.log("create RTCPeerConnection");
+
+            if (!pc) {
+                pc = new RTCPeerConnection(pcConfig);
+                pc.onicecandidate = (e) => {
+                    if (e.candidate) {
+                        sendMessage(roomId, {
+                            type: 'candidate',
+                            label: event.candidate.sdpMLineIndex,
+                            id: event.candidate.sdpMid,
+                            candidate: event.candidate.candidate
+                        });
+                    } else {
+                        console.log("end candidate");
+                    }
+                };
+
+                pc.ontrack = getRemoteStream;
+            }
+
+        }
+
+        function bindTracks() {
+            console.log("bind tracks into RTCPeerConnection");
+
+            if (pc === null || localStream === null || localStream === undefined) {
+                console.error('pc or localStream is null or undefined');
+                return;
+            }
+
+            localStream.getTracks().forEach((track) => {
+                pc.addTrack(track, localStream);
+            });
+        }
+
+        function getRemoteStream(e) {
+            remoteStream = e.streams[0];
+            remoteVideo.srcObject = remoteStream;
+        }
+
+        function hangup() {
+            if(!pc) {
+                return;
+            }
+
+            pc.close();
+            pc = null;
+        }
+
+        function sendMessage(roomid, data) {
+            if (!socket) {
+                console.log('socket is null');
+                return;
+            }
+
+            socket.emit('message', roomid, data);
+        }
+
+        function startCall() {
+            var offerOptions = {
+                offerToRecieveAudio :1,
+                offerToRecieveVideo:1
+            }
+
+            pc.createOffer(offerOptions).then(getOffer).catch(handleOfferError);
+        }
+
+        //创建offer成功
+        function getOffer(sdp) {
+            pc.setLocalDescription(sdp);
+
+            offerDesc = sdp;
+
+            //发送给对端
+            sendMessage(roomId, offerDesc);
+        }
+
+        function handleOfferError(error) {
+            console.error('create offer failed: ', error);
+        }
+
+        function getAnswer(sdp) {
+            pc.setLocalDescription(sdp);
+
+            sendMessage(roomId, sdp);
+        }
+
+        function handleAnswerError(error) {
+            console.error('create answer failed: ', error);
+        }
+    </script>
+</body>
+
+</html>

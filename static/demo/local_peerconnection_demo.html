@@ -1,0 +1,214 @@
+<html>
+
+<head>
+    <title>本地对端连接Demo</title>
+    <link rel="stylesheet" href="/static/css/main.css"/>
+</head>
+
+<body>
+    <script src="/static/js/adapter.js"></script>
+
+    <!-- 本地视频窗口 -->
+    <video id="localVideo" autoplay playinline></video>
+    <video id="remoteVideo" autoplay playinline></video>
+    <!-- 远端视频窗口 -->
+    <div>
+        <button id="startButton">start</button>
+        <button id="callButton">call</button>
+        <button id="hangupButton">hang up</button>
+    </div>
+
+    <script>
+        const mediaStreamConstraints = {
+            video: true,
+        };
+
+        //set up only exchange video
+        const offerOptions = {
+            offerToReceiveVideo:1,
+        }
+
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+
+        let localStream;
+        let remoteStream;
+
+        let localPeerConnection;
+        let remotePeerConnection;
+
+        //获取本地媒体
+        function gotLocalMediaStream(mediaStream) {
+            localVideo.srcObject = mediaStream;
+            localStream  = mediaStream;
+            console.log("Got local stream");
+            callButton.disabled = false;
+        }
+        //获取本地媒体失败
+        function handleLocalMediaStreamError(error){
+            console.log("Failed to get local media: ", error);
+        }
+        //获得远程媒体
+        function gotRemoteMediaStream(event) {
+            const mediaStream = event.stream;
+            remoteVideo.srcObject = mediaStream;
+            remoteStream = mediaStream;
+            console.log("Got remote stream");
+        }
+
+        //处理连接
+        function handleConnection(event){
+            const peerConnection = event.target;
+            const iceCandidate = event.candidate;
+
+            if(iceCandidate){
+                const newIceCandidate = new RTCIceCandidate(iceCandidate);
+                const otherPeer = getOtherPeer(peerConnection);
+
+                otherPeer.addIceCandidate(newIceCandidate).then(()=>{
+                    handleConnectionSuccess(peerConnection);
+                }).catch((error)=>{
+                    handleConnectionFailure(peerConnection, error);
+                });
+            }
+        }
+
+        function handleConnectionSuccess(peerConnection) {
+            console.log("addIceCandiate successs");
+        }
+
+        function handleConnectionFailure(peerConnection, error){
+            console.log("addIceCandidate failed:", error);
+        }
+
+        //连接变更
+        function handleConnectionChange(event){
+            const peerConnection = event.target;
+            console.log('ICE state change event:', event);
+        }
+
+        //设置SDP失败
+        function setSessionDesriptionError(error) {
+            console.log("Failed to set session descrption: " , error);
+        }
+
+        //设置SDP成功
+        function setSessionDesrpitionSuccess(peerConnection, functionName){
+            console.log("Success to set session description");
+        }
+
+        function setLocalDescriptionSuccess(peerConnection){
+            setSessionDesrpitionSuccess(peerConnection, "setLocalDescriptionSuccess");
+        }
+
+        function setRemoteDescriptionSuccess(peerConnection){
+            setSessionDesrpitionSuccess(peerConnection, "setRemoteDescriptionSuccess");
+        }
+
+
+        function createOffer(description){
+            localPeerConnection.setLocalDescription(description).then(()=>{
+                setLocalDescriptionSuccess(localPeerConnection);
+            }).catch(setSessionDesriptionError);
+
+            remotePeerConnection.setRemoteDescription(description).then(()=>{
+                setRemoteDescriptionSuccess(remotePeerConnection);
+            }).catch(setSessionDesriptionError);
+
+            //远端创建应答
+            remotePeerConnection.createAnswer().then(createAnswer).catch(setSessionDesriptionError);
+        }
+
+        //创建应答
+        function createAnswer(description){
+            remotePeerConnection.setLocalDescription(description).then(()=>{
+                setRemoteDescriptionSuccess(localPeerConnection);
+            }).catch(()=>{
+                setSessionDesriptionError
+            });
+
+            localPeerConnection.setRemoteDescription(description).then(()=>{
+                setRemoteDescriptionSuccess(localPeerConnection);
+            }).catch(setSessionDesriptionError);
+        }
+
+        const startButton = document.getElementById("startButton");
+        const callButton = document.getElementById("callButton");
+        const hangupButton = document.getElementById("hangupButton");
+
+        callButton.disabled = true;
+        hangupButton.disabled = true;
+
+        function startAction() {
+            startButton.disabled = true;
+            navigator.mediaDevices.getUserMedia(mediaStreamConstraints).then(gotLocalMediaStream).catch(handleLocalMediaStreamError);
+            console.log("request local stream.");
+        }
+
+        function callAction(){
+            callButton.disabled = true;
+            hangupButton.disabled = false;
+
+            console.log("Starting calling");
+
+            const videoTracks = localStream.getVideoTracks();
+            const audioTracks = localStream.getAudioTracks();
+            if(videoTracks.length > 0) {
+                console.log("use video track: ", videoTracks[0].label);
+            }
+
+            if(audioTracks.length>0) {
+                console.log("use audio track: ", audioTracks[0].label);
+            }
+            const servers = null;
+
+            //创建peerconnection
+            localPeerConnection = new RTCPeerConnection(servers);
+            console.log("Created local peerconnection obeject");
+
+            localPeerConnection.addEventListener('icecandidate', handleConnection);
+            localPeerConnection.addEventListener('iceconnectionstatechange', handleConnectionChange);
+
+            remotePeerConnection = new RTCPeerConnection(servers);
+            console.log("Created remote peer connection object remotePeerConnection");
+            remotePeerConnection.addEventListener('icecandidate', handleConnection);
+            remotePeerConnection.addEventListener('iceconnectionstatechange', handleConnectionChange);
+            remotePeerConnection.addEventListener('addstream', gotRemoteMediaStream);
+
+            localPeerConnection.addStream(localStream);
+
+            localPeerConnection.createOffer(offerOptions).then(createOffer).catch(setSessionDesriptionError);
+        }
+
+        function hangupAction(){
+            localPeerConnection.close();
+            remotePeerConnection.close();
+            localPeerConnection = null;
+            remotePeerConnection == null;
+            hangupButton.disabled = true;
+            callButton.disabled = false;
+            console.log("Ending calling");
+        }
+
+        startButton.addEventListener('click', startAction);
+        callButton.addEventListener('click', callAction);
+        hangupButton.addEventListener('click', hangupAction);
+
+        function getOtherPeer(peerConnection){
+            return (peerConnection == localPeerConnection) ? remotePeerConnection : localPeerConnection;
+        }
+
+        function getPeerName(peerConnection) {
+            return (peerConnection == localPeerConnection) ? 'localPeerConnection' : 'remotePeerConnection';
+        }
+
+        function trace(text) {
+            text = text.trim();
+            const now = (window.performance.now() / 1000).toFixed(3);
+
+            console.log(noew, text);
+        }
+    </script>
+</body>
+
+</html>

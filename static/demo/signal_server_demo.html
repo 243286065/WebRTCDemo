@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>WebRTC Signal Server Demo</title>
+    </head>
+
+    <body>
+        <script src="/static/js/socket.io.js"></script>
+
+        <script>
+            var room = prompt("房间名：");  //弹出一个输入窗口
+            var joined = false;
+            var serverHost = "http://" + window.location.host;
+            const socket = io(serverHost);
+            if(room !="") {
+                //创建房间
+                socket.emit("join", room);
+            }
+
+            socket.on('full', (room)=>{
+                console.log('Room' + room + ' is full');
+            });
+
+            socket.on('empty', (room)=>{
+                console.log('Room ' + room + ' is empty');
+            });
+
+            socket.on('join', (room)=>{
+                console.log('Join ' + room);
+            });
+
+            socket.on('join response', (success)=>{
+                console.log(success);
+                joined = success;
+            })
+
+            socket.on('log', (array)=>{
+                console.log.apply(console, array);
+            });
+
+            socket.on('res', (msg)=>{
+                console.log(JSON.stringify(msg));
+            });
+
+        </script>
+    </body>
+</html>
